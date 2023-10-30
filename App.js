@@ -7,7 +7,7 @@ const fs = require('fs');
 const app = express();
 app.use(express.json());
 
-const port = process.env.PORT || 4000;
+const port = process.env.PORT || 5000;
 const CANDIDATES_URL = 'https://accellor.workable.com/spi/v3/candidates?limit=1000';
 const JOBS_URL = 'https://accellor.workable.com/spi/v3/jobs?limit=500';
 const REQUISITION_URL = 'https://accellor.workable.com/spi/v3/requisitions?limit=500'
@@ -35,6 +35,7 @@ async function getRequisition() {
   const response = await axios.get(REQUISITION_URL, config);
   const responseData = response.data;
   requisitions = responseData.requisitions;
+  // console.log("requisitons::::", requisitions);
 }
 // fetch requisitions on server start
 getRequisition();
@@ -42,29 +43,29 @@ getRequisition();
 getJobs();
 
 async function fetchAllCandidatesData(CANDIDATES_URL, allCandidates = []) {
-    console.log('function running');
-    try {
-        const response = await axios.get(CANDIDATES_URL, config);
-        const responseData = response.data;
-        
-        allCandidates = allCandidates.concat(responseData.candidates);
+  // console.log('function running');
+  try {
+    const response = await axios.get(CANDIDATES_URL, config);
+    const responseData = response.data;
 
-        if (responseData.paging && responseData.paging.next) {
-            // If there are more pages, recursively fetch data from the next page.
-            return fetchAllCandidatesData(responseData.paging.next, allCandidates);
-        } else {
-            // All data has been fetched, return it.
-            return allCandidates;
-        }
-    } catch (error) {
-        if (error.response && error.response.status === 503) {
-            // Retry the request after a delay (e.g., 5 seconds).
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            return fetchAllCandidatesData(CANDIDATES_URL, allCandidates);
-        } else {
-            throw error;
-        }
+    allCandidates = allCandidates.concat(responseData.candidates);
+
+    if (responseData.paging && responseData.paging.next) {
+      // If there are more pages, recursively fetch data from the next page.
+      return fetchAllCandidatesData(responseData.paging.next, allCandidates);
+    } else {
+      // All data has been fetched, return it.
+      return allCandidates;
     }
+  } catch (error) {
+    if (error.response && error.response.status === 503) {
+      // Retry the request after a delay (e.g., 5 seconds).
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return fetchAllCandidatesData(CANDIDATES_URL, allCandidates);
+    } else {
+      throw error;
+    }
+  }
 }
 
 
@@ -84,46 +85,60 @@ app.post('/api/candidates/excel', async (req, res) => {
     // const responses = await axios.get(CANDIDATES_URL, config);
     // const responseDatas = responses.data;
     const candidates = await fetchAllCandidatesData(CANDIDATES_URL);
-    console.log(candidates);
+    // console.log(candidates);
     // Process candidates data
     candidates.forEach((candidate) => {
       jobs.forEach((job) => {
         if (candidate.job.shortcode === job.shortcode) {
           const location = job.location;
+          const departmentHierarchy = job.department_hierarchy;
+          const departmentName = departmentHierarchy.length > 0 ? departmentHierarchy[0].name : 'N/A'; // Replace 'N/A' with a suitable default value.
+      
           Object.assign(candidate, {
             Country: location.country,
             countryCode: location.country_code,
             Region: location.region,
-            SubDepartment: job.department
+            SubDepartment: job.department,
+            department: departmentName
           });
         }
       });
+      
 
       requisitions.forEach((requisition) => {
-        if(candidate.job.shortcode === requisition.job.shortcode){
-          if(requisition.hiring_manager !== null && requisition.start_date !== null ){
-          Object.assign(candidate, {
-            Recruiter: requisition.hiring_manager.name,
-            StartDate: requisition.start_date
-          });
+        if(requisition.state !== null && requisition.hiring_manager !== null ){
+          if (candidate.job.shortcode === requisition.job.shortcode ) {
+          
+              Object.assign(candidate, {
+                Recruiter: requisition.hiring_manager.name,
+                StartDate: requisition.start_date,
+                plan_date: requisition.plan_date,
+                requested_by: requisition.requester,
+                state: requisition.state,
+                employment_type: requisition.employment_type
+              });
+            
+          }
         }
-        }
+        
       });
     });
-    
-    
+
+// console.log(candidates);
+
+let filteredCandidates = candidates.filter(candidate => candidate.state !== null && candidate.state !== undefined && candidate.state !== '');
+
 
     // Prepare data array for Excel
     const dataArray = [
-      ['Name', 'First Name', 'Last Name', 'Headline', 'Account', 'Job Title', 'shortcode', 'Stage', 'Disqualified', 'Disqualification Reason', 'Hired At', 'Sourced', 'Profile URL', 'Address', 'Phone', 'Email', 'Domain', 'Created At', 'Updated At', 'Country', 'countryCode', 'Region', 'Department','Recruiter', 'StartDate'],
-      ...candidates.map(({
+      ['Name', 'First Name', 'Last Name', 'Headline', 'Account', 'job_title', 'shortcode', 'Stage', 'Disqualified', 'Disqualification Reason', 'Hired At', 'Sourced', 'Profile URL', 'Address', 'Phone', 'Email', 'Domain', 'Created At', 'Updated At', 'country', 'country_code', 'Region','sub_department', 'department', 'hiring_manager', 'StartDate', 'plan_date', 'requested_by', 'state', 'employment_type'],
+      ...filteredCandidates.map(({
         name,
         firstname,
         lastname,
         headline,
         account,
         job,
-        shortcode,
         stage,
         disqualified,
         disqualification_reason,
@@ -140,20 +155,21 @@ app.post('/api/candidates/excel', async (req, res) => {
         countryCode,
         Region,
         SubDepartment,
+        department,
         Recruiter,
-        StartDate
-      }) => [name, firstname, lastname, headline, account, job.title, shortcode, stage, disqualified, disqualification_reason, hired_at, sourced, profile_url, address, phone, email, domain, created_at, updated_at, Country, countryCode, Region, SubDepartment, Recruiter, StartDate])
+        StartDate, plan_date, requested_by, state, employment_type
+      }) => [name, firstname, lastname, headline, account, job.title, job.shortcode, stage, disqualified, disqualification_reason, hired_at, sourced, profile_url, address, phone, email, domain, created_at, updated_at, Country, countryCode, Region, SubDepartment,department, Recruiter, StartDate, plan_date, requested_by, state, employment_type])
     ];
 
     // Check if the response data has changed
-    if (JSON.stringify(candidates) !== JSON.stringify(previousCandidatesData)) {
+    if (JSON.stringify(filteredCandidates) !== JSON.stringify(previousCandidatesData)) {
       // Build the xlsx file buffer
       const buffer = xlsx.build([{ name: 'data', data: dataArray }]);
 
       // Write the buffer to the file
       fs.writeFileSync(candidatesFilePath, buffer);
 
-      previousCandidatesData = candidates;
+      previousCandidatesData = filteredCandidates;
 
       res.json({
         message: 'Data written to Excel file'
